@@ -30,7 +30,7 @@ ALL_REGIONS = EXTRA_REGIONS + [
 # Inherits from HTTPAdapter so that we can edit each request before sending
 class ApiGateway(rq.adapters.HTTPAdapter):
 
-    def __init__(self, site, regions=DEFAULT_REGIONS, access_key_id=None, access_key_secret=None, **kwargs):
+    def __init__(self, site, regions=DEFAULT_REGIONS, access_key_id=None, access_key_secret=None, verbose=False, **kwargs):
         super().__init__(**kwargs)
         # Set simple params from constructor
         if site.endswith("/"):
@@ -41,6 +41,7 @@ class ApiGateway(rq.adapters.HTTPAdapter):
         self.access_key_secret = access_key_secret
         self.api_name = site + " - IP Rotate API"
         self.regions = regions
+        self.verbose = verbose
 
     # Enter and exit blocks to allow "with" clause
     def __enter__(self):
@@ -49,6 +50,10 @@ class ApiGateway(rq.adapters.HTTPAdapter):
 
     def __exit__(self, type, value, traceback):
         self.shutdown()
+
+    def log(self, msg):
+        if self.verbose:
+            self.log(msg)
 
     def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
         # Get random endpoint
@@ -86,7 +91,7 @@ class ApiGateway(rq.adapters.HTTPAdapter):
                 current_apis = awsclient.get_rest_apis()["items"]
             except botocore.exceptions.ClientError as e:
                 if e.response["Error"]["Code"] == "UnrecognizedClientException":
-                    print(f"Could not create region (some regions require manual enabling): {region}")
+                    self.log(f"Could not create region (some regions require manual enabling): {region}")
                     return {
                         "success": False
                     }
@@ -225,7 +230,7 @@ class ApiGateway(rq.adapters.HTTPAdapter):
                     if success:
                         deleted.append(api["id"])
                     else:
-                        print(f"Failed to delete API {api['id']}.")
+                        self.log(f"Failed to delete API {api['id']}.")
                 except botocore.exceptions.ClientError as e:
                     # If timeout, retry
                     err_code = e.response["Error"]["Code"]
@@ -233,7 +238,7 @@ class ApiGateway(rq.adapters.HTTPAdapter):
                         sleep(1)
                         continue
                     else:
-                        print(f"Failed to delete API {api['id']}.")
+                        self.log(f"Failed to delete API {api['id']}.")
             api_iter += 1
         return deleted
 
@@ -244,7 +249,7 @@ class ApiGateway(rq.adapters.HTTPAdapter):
             return endpoints
 
         # Otherwise, start/locate new endpoints
-        print(f"Starting API gateway{'s' if len(self.regions) > 1 else ''} in {len(self.regions)} regions.")
+        self.log(f"Starting API gateway{'s' if len(self.regions) > 1 else ''} in {len(self.regions)} regions.")
         self.endpoints = []
         new_endpoints = 0
 
@@ -262,11 +267,11 @@ class ApiGateway(rq.adapters.HTTPAdapter):
                     if result["new"]:
                         new_endpoints += 1
 
-        print(f"Using {len(self.endpoints)} endpoints with name '{self.api_name}' ({new_endpoints} new).")
+        self.log(f"Using {len(self.endpoints)} endpoints with name '{self.api_name}' ({new_endpoints} new).")
         return self.endpoints
 
     def shutdown(self, endpoints=None):
-        print(f"Deleting gateway{'s' if len(self.regions) > 1 else ''} for site '{self.site}'.")
+        self.log(f"Deleting gateway{'s' if len(self.regions) > 1 else ''} for site '{self.site}'.")
         futures = []
         # Setup multithreading object
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
@@ -277,5 +282,5 @@ class ApiGateway(rq.adapters.HTTPAdapter):
             deleted = []
             for future in concurrent.futures.as_completed(futures):
                 deleted += future.result()
-        print(f"Deleted {len(deleted)} endpoints with for site '{self.site}'.")
+        self.log(f"Deleted {len(deleted)} endpoints with for site '{self.site}'.")
         return deleted
